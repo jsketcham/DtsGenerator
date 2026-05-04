@@ -13,14 +13,11 @@ import AVFoundation
 
 @Observable nonisolated class CAOutput{
     
-    var busy = false
     var ringBuffer = RingBuffer()
 
-    // AudioUnits and Graph
-    var graph: AUGraph?
-    var outputNode: AUNode = 0
+    // AudioUnit
     var outputUnit: AudioUnit?
-    var asbdOut = AudioStreamBasicDescription()
+    var asbd = AudioStreamBasicDescription()
 
     var outputProc: AURenderCallback = { (inRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames,
                                           ioData) -> OSStatus in
@@ -68,9 +65,7 @@ import AVFoundation
         }
         
     }
-    func reset(_ output : AudioDeviceID){
-        
-    }
+
     func isRunning() -> Bool {
         
         var auhalRunning: UInt32 = 0
@@ -85,19 +80,6 @@ import AVFoundation
 
         return auhalRunning != 0
     }
-    
-//    @discardableResult func InitAndStartAUHAL() -> OSStatus{
-//     
-//        if let err = checkErr(AudioUnitInitialize(outputUnit!)){
-//            return err
-//        }
-//     
-//        if let err = checkErr(AudioOutputUnitStart(outputUnit!)){
-//            return err
-//        }
-//        
-//        return noErr
-//    }
 
 }
 nonisolated extension CAOutput{
@@ -173,14 +155,8 @@ nonisolated extension CAOutput{
           return err
         }
         
-        // 5. get the output format (bus 0)
-        var propertySize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        if let err = checkErr(AudioUnitGetProperty(outputUnit!, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &asbdOut, &propertySize)) {
-            
-            return err
-        }
-        //print("deviceID \(output) asbd \(asbdOut)")
-        // deviceID 62 asbd AudioStreamBasicDescription(mSampleRate: 48000.0, mFormatID: 1819304813, mFormatFlags: 9, mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8, mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+        // set sample rate
+        if let err = checkErr(setupAsbd()){return err}
         
         // register output procedure
         var output = AURenderCallbackStruct(
@@ -191,11 +167,6 @@ nonisolated extension CAOutput{
         if let err = checkErr(AudioUnitSetProperty(outputUnit!, kAudioUnitProperty_SetRenderCallback,
                                                    kAudioUnitScope_Input, 0, &output,
                                                    UInt32(MemoryLayout<AURenderCallbackStruct>.size))) {
-          return err
-        }
-        
-        // AUHAL needs to be initialized before anything is done to it
-        if let err = checkErr(AudioUnitInitialize(outputUnit!)) {
           return err
         }
 
@@ -223,6 +194,30 @@ nonisolated extension CAOutput{
         
         return AudioUnitSetProperty(outputUnit!, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Output, 0,
                                   &out, UInt32(MemoryLayout<AudioDeviceID>.size))
+    }
+    
+    func setupAsbd() -> OSStatus{
+        
+        var asbdDev1In = AudioStreamBasicDescription()
+
+        var propertySize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        var err = AudioUnitGetProperty(outputUnit!, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0,
+                                       &asbdDev1In, &propertySize); if err != noErr { return err }
+        
+        // Get the Stream Format (client side)
+        propertySize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        err = AudioUnitGetProperty(outputUnit!, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &asbd,
+                                   &propertySize); if err != noErr { return err }
+        
+        // set the input sample rate to match
+        asbdDev1In.mSampleRate = asbd.mSampleRate
+
+        if let err = checkErr(AudioUnitSetProperty(outputUnit!, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input,
+                                                   0, &asbdDev1In, propertySize)) {
+          return err
+        }
+
+        return noErr
     }
 
 }

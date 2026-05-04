@@ -11,8 +11,8 @@ import Synchronization
 import SwiftUI
 import AVFoundation
 
-nonisolated let bufferSize = 8192  // delay line
-nonisolated let bitBufferSize = 256
+nonisolated let bufferSize = 1024  // double buffer for tc generator
+nonisolated let bitBufferSize = 512
 
 @Observable nonisolated class RingBuffer {
     
@@ -20,32 +20,49 @@ nonisolated let bitBufferSize = 256
     var ti : TimeInterval = 0
     private var buffers : [[Float]] = Array(repeating: Array(repeating: 0, count: bufferSize), count: 2)
     
-    private var inIndex : Int = 0
-    private var outIndex : Int = 0
-    private var full = false
+     var inIndex : Int = 0
+     var outIndex : Int = 0
+     var full = false
     
-    var reels : [Int] = [1001,1002,1003,1004,1005]
+    var reels : [Int] = [101,102,103,104,105]
     
     private var frequencyAccum = 0.0
     private var ltcPhase : Int32 = 0
     private var ltcAmplitude : Float = 0.1
     var serialNumber : UInt32 = 1234
     var frameNumber : UInt32 = 0   // reel 1, frame 0 is the pop
-    var reelNumber : UInt32 = 1
+    var reelNumber : UInt32 = 1{
+        didSet{
+            print("reel \(reelNumber)")
+        }
+    }
     private var ltcShifter : UInt32 = 0
     private var toggle = false
     private let freqIncr = 1440.0 / 48000.0
     private let bitsPerDtsHalfCell = 33.33        // half cells, 1440 hz
     
     // -6dB for now
-    private var posBit : [Float] = Array(repeating: -0.5, count: bitBufferSize)   // need 133 for a sync mark
-    private var negBit : [Float] = Array(repeating: 0.5, count: bitBufferSize)
+    private var posBit : [Float] = Array(repeating: -0.1, count: bitBufferSize)   // need 133 for a sync mark
+    private var negBit : [Float] = Array(repeating: 0.1, count: bitBufferSize)
     var numSamplesOverflow = 0{
         didSet{
             if numSamplesOverflow != 0 {
                 //print("numSamplesOverflow \(numSamplesOverflow)")
             }
         }
+    }
+    
+    init(){
+        // fill buffer with -20dB 750hz sine
+        for i in 0..<bufferSize{
+            
+            let sinValue = 1.0 * sin(2.0 * Float.pi * Float(i % 64) / 64.0)
+
+            for j in 0..<buffers.count{
+                buffers[Int(j)][i] = sinValue
+             }
+        }
+
     }
 
     func reset(){
@@ -68,15 +85,19 @@ nonisolated let bitBufferSize = 256
         // a fast DTS generator that writes all the samples of the period using memcpy
         
         guard busy == false else {return noErr}
+        
+        var framesAvailable = Int(framesAvailable())
+        var index = Int(inIndex)
+        
+        var pData: UnsafeMutablePointer<Float>?
+        var pBit: UnsafeMutablePointer<Float>?
+        var size: Int = 0
+
         guard reelNumber <= reels.count else {return -1}
 
         self.busy = true
         let now = Date()
 
-        //
-        var framesAvailable = Int(framesAvailable())
-        var index = Int(inIndex)
-        
         var pNegBit: UnsafeMutablePointer<Float>?
         negBit.withUnsafeMutableBufferPointer{ ptr in
             
@@ -87,10 +108,6 @@ nonisolated let bitBufferSize = 256
             
             pPosBit = ptr.baseAddress!.advanced(by: Int(0))
         }
-
-        var pData: UnsafeMutablePointer<Float>?
-        var pBit: UnsafeMutablePointer<Float>?
-        var size: Int = 0
         
         // handle overflow from previous frame
         while numSamplesOverflow > 0 && framesAvailable > 0{
@@ -132,7 +149,7 @@ nonisolated let bitBufferSize = 256
                 let maxFrameNumber = reels[Int(reelNumber) - 1] // guard statement keeps this in bounds
                 
                 if frameNumber > maxFrameNumber{
-                    reelNumber += 1; print("reel \(reelNumber)")
+                    reelNumber += 1
                     frameNumber = 60    // FFOA
                     
                 }
@@ -231,11 +248,16 @@ nonisolated let bitBufferSize = 256
 
     @discardableResult func fetch(_ abl: UnsafeMutableAudioBufferListPointer, nFrames: UInt32)->OSStatus{
         
+        guard reelNumber <= reels.count else {return -1}
+        
         var outIndexCopy = self.outIndex    // copy ptr
         var ablOfs : Int = 0                // on wrap, happens once
 
         var framesToWrite = Int(min(nFrames,readFramesAvailable()))
-        if framesToWrite == 0{return -1}    // out of frames
+        if framesToWrite == 0{
+            print("out of frames")
+            return -1
+        }    // out of frames
         
         let numBuffers = min(abl.count,buffers.count)   // will always be stereo, but allow mono
 
