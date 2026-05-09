@@ -24,7 +24,7 @@ nonisolated let bitBufferSize = 512
      var outIndex : Int = 0
      var full = false
     
-    var reels : [Int] = [101,102,103,104,105]
+    var reels : [Int] = [1001,1002,1003,1004,1005]
     
     private var frequencyAccum = 0.0
     private var ltcPhase : Int32 = 0
